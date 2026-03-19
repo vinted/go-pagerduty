@@ -93,6 +93,15 @@ type fallbackAPIErrorObject struct {
 	Errors  string `json:"errors,omitempty"`
 }
 
+// objectFallbackAPIErrorObject handles the case where PagerDuty returns
+// `errors` as a JSON object (e.g. field validation errors on schedule creation)
+// rather than []string or string.
+type objectFallbackAPIErrorObject struct {
+	Code    int             `json:"code,omitempty"`
+	Message string          `json:"message,omitempty"`
+	Errors  json.RawMessage `json:"errors,omitempty"`
+}
+
 // NullAPIErrorObject is a wrapper around the APIErrorObject type. If the Valid
 // field is true, the API response included a structured error JSON object. This
 // structured object is then set on the ErrorObject field.
@@ -126,13 +135,21 @@ func (n *NullAPIErrorObject) UnmarshalJSON(data []byte) error {
 		var faeo fallbackAPIErrorObject
 
 		if err := json.Unmarshal(data, &faeo); err != nil {
-			// still failed, so return the original error
-			return terr
+			// errors may be a JSON object (e.g. field validation map); parse
+			// code/message and discard the unparseable errors value.
+			var errorObject objectFallbackAPIErrorObject
+			if err := json.Unmarshal(data, &errorObject); err != nil {
+				// still failed, so return the original error
+				return terr
+			}
+			aeo.Code = errorObject.Code
+			aeo.Message = errorObject.Message
+			aeo.Errors = []string{string(errorObject.Errors)}
+		} else {
+			aeo.Code = faeo.Code
+			aeo.Message = faeo.Message
+			aeo.Errors = []string{faeo.Errors}
 		}
-
-		aeo.Code = faeo.Code
-		aeo.Message = faeo.Message
-		aeo.Errors = []string{faeo.Errors}
 	}
 
 	n.ErrorObject = aeo
